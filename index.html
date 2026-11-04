@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Grocery lists, recipes and prices from anything you paste.">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -543,6 +543,7 @@ function parseList(text) {
 const H_ING = /^(?:#+\s*)?(ingredients?|what you(?:'|’)?ll need|you(?:'|’)?ll need)\b\s*:?\s*$/i;
 const H_STEP = /^(?:#+\s*)?(instructions?|directions?|method|steps?|preparation|how to make(?: it)?)\b\s*:?\s*$/i;
 const H_NOTE = /^(?:#+\s*)?(notes?|tips?|chef'?s notes?|nutrition)\b\s*:?\s*$/i;
+const splitRecipes = t => String(t).split(/^\s*(?:-{3,}|={3,}|\*{3,})\s*$/m).map(s => s.trim()).filter(s => s.split('\n').filter(x => x.trim()).length >= 3);
 function detectKind(t) {
   if (/^\s*(?:#+\s*)?(ingredients?|instructions?|directions?|method)\b\s*:?\s*$/im.test(t)) return 'recipe';
   const lines = t.split(/\n/).filter(s => s.trim());
@@ -1109,6 +1110,7 @@ function openImport(text = '') {
   IMP = { mode: 'auto', off: new Set(), items: [], recipe: null };
   openSheet(`<h2>Paste anything</h2><p class="lead">A list from your notes, a text message, a receipt, or a whole recipe from a website. Larder sorts it out.</p>
   <div class="form"><label class="field" for="imp-text">What you copied</label><textarea id="imp-text" class="input" style="height:auto;min-height:150px;padding:12px 13px;font-size:15px;line-height:1.45" placeholder="2 lb chicken breast&#10;Greek yogurt x2 $5.49&#10;bananas, spinach, avocados"></textarea>
+  <p class="small muted" style="margin:-4px 0 0">Several recipes at once? Put a line with --- between them.</p>
   <div class="seg" role="group" aria-label="Read it as">${[['auto', 'Auto-detect'], ['list', 'Grocery list'], ['recipe', 'Recipe']].map(([m, l]) => `<button data-act="imp-mode" data-v="${m}" aria-pressed="${m === 'auto'}">${l}</button>`).join('')}</div></div>
   <div id="imp-prev"></div>`);
   const ta = $('#imp-text'); ta.value = text;
@@ -1128,6 +1130,10 @@ function impPreview() {
       (IMP.items.length ? `<div class="prev">${IMP.items.map((p, k) => `<label class="prow ${IMP.off.has(k) ? 'off' : ''}"><input type="checkbox" data-impk="${k}" ${IMP.off.has(k) ? '' : 'checked'}><span class="pn">${esc(p.name)}<span class="pm">${esc([qtyText(p.qty, p.unit), p.note, p.aisle].filter(Boolean).join(' · '))}</span></span><span class="pp">${p.price != null ? money(p.price) : ''}</span></label>`).join('')}</div>
       <div class="form" style="margin-top:12px"><label class="field">Add to${listSelect('imp-dest', S.active)}</label></div>
       <div class="actions"><button class="btn primary block" data-act="imp-list" id="imp-go" ${n ? '' : 'disabled'}>Add ${n} item${n === 1 ? '' : 's'}</button></div>` : '<p class="muted">No items found yet.</p>');
+  } else if (splitRecipes(t).length > 1) {
+    const rs = IMP.recipes = splitRecipes(t).map(parseRecipe); IMP.recipe = null;
+    box.innerHTML = `<div class="detect">${IMP.mode === 'auto' ? '<span class="badge">AUTO</span>' : ''}Found <b>${rs.length} recipes</b></div><div class="prev">${rs.map(r => `<div class="prow" style="grid-template-columns:minmax(0,1fr) auto"><span class="pn">${esc(r.title)}<span class="pm">${[r.servings ? 'Serves ' + r.servings : '', r.ingredients.length + ' ingredients', r.steps.length + ' steps'].filter(Boolean).join(' · ')}</span></span><span class="pp">${r.time ? esc(r.time) : ''}</span></div>`).join('')}</div>
+    <div class="actions"><button class="btn primary block" data-act="imp-recipes">Save all ${rs.length} recipes</button></div>`;
   } else {
     const r = IMP.recipe = parseRecipe(t);
     box.innerHTML = `<div class="detect">${IMP.mode === 'auto' ? '<span class="badge">AUTO</span>' : ''}Reading this as a <b>recipe</b></div><div class="rprev"><label class="field">Title<input id="imp-title" value="${esc(r.title)}"></label><div class="stats"><span class="pill">${r.servings ? 'Serves ' + r.servings : 'Servings not found'}</span>${r.time ? `<span class="pill">${I('timer')}${esc(r.time)}</span>` : ''}<span class="pill">${r.ingredients.length} ingredients</span><span class="pill">${r.steps.length} steps</span></div>${r.ingredients.length ? `<div class="small muted">${esc(r.ingredients.slice(0, 6).map(i => ingText(i)).join(' · '))}${r.ingredients.length > 6 ? ' …' : ''}</div>` : '<div class="small muted">No ingredient lines found. You can fix this after saving with Edit.</div>'}</div>
@@ -1318,6 +1324,12 @@ const ACT = {
     UI.tab = 'recipes'; UI.recipe = r.id; render(); scrollTo(0, 0);
     if (b.dataset.add) setTimeout(() => sheetRecipeToList(r.id), 320);
     toast('Recipe saved');
+  },
+  'imp-recipes': () => {
+    const rs = IMP.recipes || []; if (!rs.length) return;
+    rs.forEach((p, k) => S.recipes.push(makeRecipe(p, { created: Date.now() - k })));
+    save(); closeSheet(); UI.tab = 'recipes'; UI.recipe = null; render(); scrollTo(0, 0); vibrate(15);
+    toast(`Saved ${rs.length} recipes`);
   },
   /* settings */
   theme: b => { S.settings.theme = b.dataset.v; save(); applyTheme(); b.parentElement.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); },
